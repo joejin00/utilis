@@ -1,0 +1,155 @@
+#!/bin/bash
+#
+# disable_ht -- disable hyperthareading on runtime
+#
+
+RET=0
+
+XM=/usr/sbin/xm
+XENPM=/usr/sbin/xenpm
+XENHP=/usr/sbin/xen-hptool
+
+dry_run=0
+if [ $# -ge 1 ]; then
+    if [ $1 == "--dry-run" ]; then
+        dry_run=1
+    else
+        fatal "Usage: $0 [--dry-run]"
+    fi
+fi
+
+warn()
+{
+    RET=2
+    echo @$
+}
+
+fatal()
+{
+    echo $@
+    exit 1
+}
+
+# Xen Hyperthreading enabled or no
+is_hyperthreading()
+{
+    local threads;
+
+    threads=$($XM info | grep ^threads_per_core | awk -F: '{print $2}' | sed 's/ //g')
+    if [ "x$threads" = "x" ]; then
+        return 1
+    elif [ $threads -gt 1 ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Disable Hyperthreading for Xen/OVM
+disable_ovm_ht()
+{
+
+    if ! rpm -q xen-tools &>/dev/null  ; then
+        fatal "No xen-tools package found!"
+    fi
+    
+    [ -f $XM ] || fatal "No $XM!"
+    [ -x $XM ] || fatal "$XM not excutable!"
+    [ -f $XENPM ] || fatal "No $XENPM!"
+    [ -x $XENPM ] || fatal "$XENPM not excutable!"
+    [ -f $XENHP ] || fatal "No $XENHP"
+    [ -x $XENHP ] || fatal "$XENHP not exctable!"
+    
+    if ! is_hyperthreading ; then
+        echo "CPU does not supporting Hyperthreading or it already disabled!"
+        exit 0
+    fi
+    
+    ! $XENPM get-cpu-topology &>/dev/null && fatal "Failed on get CPU topology!"
+    
+    last_coreid=65535
+    last_socketid=65535
+    last_nodeid=65535
+    # Get CPU topology by `xenpm`
+    ($XENPM get-cpu-topology|grep -v "^CPU" -w | sed 's/CPU//g') | \
+    while read cpuid coreid socketid nodeid; do
+        if [ $coreid -eq $last_coreid -a $last_socketid -eq $socketid -a $last_nodeid -eq $nodeid ]; then
+            echo "Disabling cpu${cpuid} core${coreid} socket${socketid}"
+            if [ $dry_run -eq 0 ]; then
+                $XENHP cpu-offline $cpuid &>/dev/null || warn "Failed to disable $cpuid"
+            fi
+        fi
+        last_coreid=$coreid
+	last_socketid=$socketid
+	last_nodeid=$nodeid
+    done
+    
+    if [ $dry_run -eq 1 ]; then
+        return 0
+    fi
+    
+    if is_hyperthreading ; then
+        warn "Failed to disable hyperthreading!"
+    fi
+    
+    if [ $RET -eq 0 ]; then
+        echo "Hyperthreading disabled!"
+    else
+        echo "Failed to disabled Hyperthreading"
+    fi
+    
+    return $RET
+}
+
+disable_bm_ht()
+{
+    local -a coreid
+    local i=0
+    RET=0
+    
+    # Get physical CPU id
+    IFS=$'\n' pcpuid=$(cat /proc/cpuinfo | grep "physical id" |  awk -F: '{print $2}' | sed 's/ //' | sort -u -n)
+    # Get all core id
+    IFS=$'\n' coreid=$(cat /proc/cpuinfo | grep "core id" |  awk -F: '{print $2}' | sed 's/ //' | sort -u -n)
+
+    for pcpu in ${pcpuid[@]}; do
+        for core in ${coreid[@]}; do
+            first=1
+            for i in /sys/devices/system/cpu/cpu*; do
+                cid=$(cat $i/topology/core_id 2>/dev/null)
+                pid=$(cat $i/topology/physical_package_id 2>/dev/null)
+    
+                if [ "x$cid" = "x" -o "x$pid" = "x" ]; then
+                    # Could not got PackageID or CoreID
+                    continue
+		fi
+
+		if [ $cid != $core -o $pid != $pcpu ]; then
+		    continue
+		fi
+
+                if [ $first -eq 1 ]; then
+                    first=0
+		    continue
+                fi
+
+                echo "Disabling $(basename $i) core${cid} socket${pid}"
+                if [ $dry_run -eq 0 ]; then
+                    echo 0 > $i/online || warn "Failed to disable $cpuid"
+                fi
+            done
+        done
+    done
+
+    return $RET
+}
+
+if [ -f /proc/xen/privcmd ]; then
+    disable_ovm_ht
+elif [ -d /proc/xen ]; then
+    echo "Please make sure you run it on OVM Server or BareMetal!"
+else
+    disable_bm_ht
+fi
+
+exit $RET
