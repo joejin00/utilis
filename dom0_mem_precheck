@@ -1,0 +1,158 @@
+#!/bin/bash
+
+XM=/usr/sbin/xm
+
+if ! [ -x $XM ]; then
+    echo "Can not found xm command"
+    exit 1
+fi
+
+if ! $XM list &>/dev/null; then
+    echo "Unable to connect to xend!"
+    exit 1
+fi
+function is_digit()
+{
+    if [ "x$1" = "x" ]; then
+        return 0
+    fi
+    re='^[0-9]+$'
+    if ! [[ $1 =~ $re ]] ; then
+        return 1
+    fi
+    return 0
+}
+
+total=$($XM info | grep total | awk -F: '{print $2}'|sed 's/ //g')
+if ! is_digit $total; then
+    echo "Invalid total memory(\"$total\")!"
+    exit 1
+fi
+
+if [ $total -le 0 ]; then
+    echo "Unable to get total memory!"
+    exit 1
+fi
+
+dom0_mem=$(echo "768+$total*0.0205"|bc|sed 's/\..*//g')
+dom0_cur=$(free -m | head -2|tail -1|awk '{print $2}')
+
+if ! is_digit $dom0_mem; then
+    echo "Unable to calculate dom0_mem"
+    exit 1
+fi
+
+echo '+------------------------------------|--------------------|--------------------+'
+printf "|%-36s|%20s|%20s|\n" "Name" "Current" "Required"
+echo '+------------------------------------|--------------------|--------------------+'
+printf "|%-36s|%20s|%20s|\n" "Domain-0" $dom0_cur $dom0_mem
+req=0
+for domid in $($XM list | egrep -v -w "Name|Domain-0" | awk '{print $2}'); do
+    domname=$($XM list $domid | tail -1 | awk '{print $1}')
+    max=$($XM list --long $domid | egrep -w "maxmem" | awk '{print $2}' | sed 's/)//g')
+    mem=$($XM list --long $domid | egrep -w "memory" | awk '{print $2}' | sed 's/)//g')
+    if [ "x$mem" = "x" ] || ! is_digit $mem ; then
+        echo "Unable to get domain $i usage!, please check it manually"
+        exit 1
+    fi
+    if [ "x$max" = "x" ] || ! is_digit $max ; then
+        max=$mem
+    fi
+    printf "|%-36s|%20s|%20s|\n" $domname $((mem+10)) $((max+10))
+    # Add extra 10M which used by guests
+    req=$((req+mem+10))
+done
+
+req=$((req+dom0_mem))
+
+echo '+------------------------------------|--------------------|--------------------+'
+printf "|%-36s|%20s|%20s|\n" "Total" $total $req
+echo '+------------------------------------|--------------------|--------------------+'
+
+if [ $req -gt $total ]; then
+    echo "Server $(hostname) does not match minimum memory requirement!"
+    exit 1
+fi
+
+echo "Server $(hostname) matches memory requirement, READY to go!!"
+exit 0
+[root@localhost ~]#  vi dom0_mem_prechk 
+[root@localhost ~]# cat dom0_mem_prechk 
+#!/bin/bash
+
+XM=/usr/sbin/xm
+
+if ! [ -x $XM ]; then
+    echo "Can not found xm command"
+    exit 1
+fi
+
+if ! $XM list &>/dev/null; then
+    echo "Unable to connect to xend!"
+    exit 1
+fi
+function is_digit()
+{
+    if [ "x$1" = "x" ]; then
+        return 0
+    fi
+    re='^[0-9]+$'
+    if ! [[ $1 =~ $re ]] ; then
+        return 1
+    fi
+    return 0
+}
+
+total=$($XM info | grep total | awk -F: '{print $2}'|sed 's/ //g')
+if ! is_digit $total; then
+    echo "Invalid total memory(\"$total\")!"
+    exit 1
+fi
+
+if [ $total -le 0 ]; then
+    echo "Unable to get total memory!"
+    exit 1
+fi
+
+dom0_mem=$(echo "768+$total*0.0205"|bc|sed 's/\..*//g')
+dom0_cur=$(free -m | head -2|tail -1|awk '{print $2}')
+
+if ! is_digit $dom0_mem; then
+    echo "Unable to calculate dom0_mem"
+    exit 1
+fi
+
+echo '+------------------------------------|--------------------|--------------------+'
+printf "|%-36s|%20s|%20s|\n" "Name" "Current" "Required"
+echo '+------------------------------------|--------------------|--------------------+'
+printf "|%-36s|%20s|%20s|\n" "Domain-0" $dom0_cur $dom0_mem
+req=0
+for domid in $($XM list | egrep -v -w "Name|Domain-0" | awk '{print $2}'); do
+    domname=$($XM list $domid | tail -1 | awk '{print $1}')
+    max=$($XM list --long $domid | egrep -w "maxmem" | awk '{print $2}' | sed 's/)//g')
+    mem=$($XM list --long $domid | egrep -w "memory" | awk '{print $2}' | sed 's/)//g')
+    if [ "x$mem" = "x" ] || ! is_digit $mem ; then
+        echo "Unable to get domain $i usage!, please check it manually"
+        exit 1
+    fi
+    if [ "x$max" = "x" ] || ! is_digit $max ; then
+        max=$mem
+    fi
+    printf "|%-36s|%20s|%20s|\n" $domname $((mem+10)) $((max+10))
+    # Add extra 10M which used by guests
+    req=$((req+mem+10))
+done
+
+req=$((req+dom0_mem))
+
+echo '+------------------------------------|--------------------|--------------------+'
+printf "|%-36s|%20s|%20s|\n" "Total" $total $req
+echo '+------------------------------------|--------------------|--------------------+'
+
+if [ $req -gt $total ]; then
+    echo "Server $(hostname) does not match minimum memory requirement!"
+    exit 1
+fi
+
+echo "Server $(hostname) matches memory requirement, READY to go!!"
+exit 0
