@@ -1,0 +1,100 @@
+#!/bin/bash
+
+XM=/usr/sbin/xm
+
+fatal()
+{
+	if [ -d $tmpdir ]; then
+		rm -rf $tmpdir
+	fi
+	echo "Error: $@"
+	exit 1
+}
+
+tmpdir=$(mktemp -d --tmpdir=/tmp XXXXXXXXXX)
+if [ ! -d $tmpdir ]; then
+	fatal "Failed to create temp dir!"
+fi
+VMCFG=$tmpdir/vm.cfg
+
+myecho()
+{
+	echo $@ >> $VMCFG
+}
+
+if [ ! -x ${XM} ]; then
+	fatal "This script for Dom0 only"
+fi
+
+if ! ${XM} list &>/dev/null; then
+	fatal "Please check and confirm xend has started!"
+fi
+
+nr_cpus=$(${XM} info|grep nr_cpus|awk -F: '{print $2}')
+if [ "x$nr_cpus" = "x"  -o  $nr_cpus -lt 1 ]; then
+	fatal "Failed to get NR_CPUs"
+fi
+
+cat << EOF >> ${VMCFG}
+builder = 'hvm'
+name = 'ibrs'
+memory = 256
+vfb = [ 'vnc=1,vnclisten=127.0.0.1' ]
+serial = 'pty'
+on_poweroff = 'destroy'
+on_reboot = 'destroy'
+on_crash = 'destroy'
+pae = 1
+acpi = 1
+timer_mode = 1
+tsc_mode = 0
+EOF
+
+max_cpus=$((nr_cpus-1))
+myecho "vcpus = $nr_cpus"
+myecho -n "cpus = ["
+
+for i in $(seq 0 $max_cpus); do 
+	myecho -n "\"$i\","
+done
+myecho "]"
+myecho "disk = [ 'file:${tmpdir}/System.img,xvda,w' ]"
+
+if ! grep -q SYSTEM_IMG.GZ $0 ; then
+	fatal "Unable to find image file!"
+fi
+sline=$(grep -n SYSTEM_IMG.GZ $0 --binary-files=text|tail -1|awk -F: '{print $1}')
+total=$(wc -l $0 | awk '{print $1}')
+l=$((total-sline))
+l=$((l+1))
+tail -$l $0| gunzip > $tmpdir/System.img || fatal "Failed on unzip!"
+
+${XM} create $VMCFG &>/dev/null || fatal "Failed on created temporary guest"
+
+for i in $(seq 1 30); do
+	if ${XM} list | grep ibrs -q; then
+		sleep 1
+	else
+		break;
+	fi
+done
+if ${XM} list | grep ibrs -q; then
+	xm destroy ibrs
+	fatal "Failed to disable IBRS!"
+fi
+
+rm -rf $tmpdir
+
+echo "IBRS disabled, please do performance test from Dom0 by below script"
+echo "for i in \$(seq 0 $max_cpus); do"
+echo "	xm vcpu-pin 0 0 \$i;"
+echo "	( time echo \"scale=1000; a(1)*4\" | taskset -c 0 bc -l >/dev/null ) 2>&1 | grep real | sed \"s/^/\$i /\";"
+echo "done"
+exit 0
+
+
+
+
+
+
+################ SYSTEM_IMG.GZ #############
