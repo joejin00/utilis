@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# Server IP
+SIP="192.168.10.230"
+# Client IP
+CIP="192.168.10.229"
+Q_NUM=20
+
+if [ "x$1" = "xclient" ]; then
+    for i in $(seq 1 $Q_NUM); do
+        rds-stress -q 256 -a 256 -d 16 -t 16 -o -r $CIP -s $SIP -Q $i;
+    done
+elif [ "x$1" = "xserver" ]; then
+    for i in $(seq 1 $Q_NUM); do 
+        rds-stress -q 256 -a 256 -d 16 -t 16 -o -r $SIP -Q $i;
+    done
+else
+    echo "Usage $0 server|client"
+    exit 1
+fi
