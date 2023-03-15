@@ -1,0 +1,32 @@
+#!/bin/bash
+#
+# get_kvm_guest_stat -- get kvm guest vcpu utilization by pidstat
+
+PIDSTAT=/usr/bin/pidstat
+
+if ! [ -x $PIDSTAT ]; then
+    echo "No pidstat found!"
+    exit 1
+fi
+
+SAVETO=/var/log/pidstat
+INTERVAL=30 # seconds
+mkdir -p $SAVETO
+
+
+start_it()
+{
+    while true; do
+        pids=$(/usr/sbin/pidof qemu-system-x86_64)
+        for pid in $pids; do
+            SAVEFILE=${SAVETO}/$(/usr/bin/date +%F_%H)_pidstat_${pid}.data
+            echo "***zzz $(date '+%F %T')" >> $SAVEFILE
+            cat /proc/$pid/cmdline >> $SAVEFILE
+            $PIDSTAT -ut -p $pid >> $SAVEFILE
+        done
+        sleep $INTERVAL
+    done
+}
+
+export -f start_it
+/usr/bin/nohup bash -c start_it &
